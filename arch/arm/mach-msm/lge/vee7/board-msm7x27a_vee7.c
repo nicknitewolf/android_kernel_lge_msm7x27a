@@ -13,6 +13,11 @@
 #include <linux/init.h>
 #include <linux/gpio_event.h>
 #include <linux/memblock.h>
+
+#ifdef CONFIG_LGE_DIAGTEST
+#include <../../../lge/include/lg_fw_diag_communication.h>
+#endif
+
 #include <asm/mach-types.h>
 #include <linux/memblock.h>
 #include <asm/mach/arch.h>
@@ -46,29 +51,41 @@
 #include <linux/atmel_maxtouch.h>
 #include <linux/msm_adc.h>
 #include <linux/msm_ion.h>
-#include <linux/dma-contiguous.h>
-#include <linux/dma-mapping.h>
 
 #ifdef CONFIG_ANDROID_RAM_CONSOLE
 #include <linux/persistent_ram.h>
 #endif
 
+#if defined (CONFIG_MACH_LGE)
 #include "../../devices.h"
 #include "../../timer.h"
 #include "../../board-msm7x27a-regulator.h"
 #include "../../devices-msm7x2xa.h"
 #include "../../pm.h"
+#else /*qct original*/
+#include "devices.h"
+#include "timer.h"
+#include "board-msm7x27a-regulator.h"
+#include "devices-msm7x2xa.h"
+#include "pm.h"
+#endif /*CONFIG_MACH_LGE*/
 
 #include <mach/rpc_server_handset.h>
 #include <mach/socinfo.h>
 
+#if defined (CONFIG_MACH_LGE)
 #include CONFIG_LGE_BOARD_HEADER_FILE
 #include "../../pm-boot.h"
 #include "../../board-msm7627a.h"
 
 #ifdef CONFIG_ANDROID_RAM_CONSOLE
 #include <asm/setup.h>
-#endif
+#endif /*CONFIG_ANDROID_RAM_CONSOLE*/
+
+#else
+#include "pm-boot.h"
+#include "board-msm7627a.h"
+#endif /*CONFIG_MACH_LGE*/
 
 #ifdef CONFIG_LGE_BOOT_MODE
 #include <mach/lge/lge_boot_mode.h>
@@ -77,11 +94,10 @@
 #include <mach/lge/lge_pm.h>
 #endif
 #define RESERVE_KERNEL_EBI1_SIZE	0x3A000
-#define MSM_RESERVE_AUDIO_SIZE		0xF0000
-#define BOOTLOADER_BASE_ADDR		0x10000
+#define MSM_RESERVE_AUDIO_SIZE	0x1F4000
 
 #ifdef CONFIG_ANDROID_RAM_CONSOLE
-#define MSM7X27_EBI1_CS0_SIZE	0xFD00000
+#define MSM7X27_EBI1_CS0_SIZE	0x1FD00000
 #define LGE_RAM_CONSOLE_START	(MSM7X27_EBI1_CS0_BASE + MSM7X27_EBI1_CS0_SIZE)
 #endif
 
@@ -95,7 +111,7 @@ struct persistent_ram_descriptor ram_console_desc = {
         .name = "ram_console",
         .size = LGE_RAM_CONSOLE_SIZE - 1,
 };
-
+	
 struct persistent_ram ram_console_ram = {
         .start = LGE_RAM_CONSOLE_START,
         .size = LGE_RAM_CONSOLE_SIZE - 1,
@@ -146,7 +162,7 @@ static void __init register_i2c_devices(void)
 	if (machine_is_msm7x27a_surf() || machine_is_msm7625a_surf()
 		|| machine_is_msm8625_surf()
 		|| machine_is_msm8x25_v7())
-
+			
 		sx150x_data[SX150X_CORE].io_open_drain_ena = 0xe0f0;
 
 	core_exp_i2c_info[0].platform_data =
@@ -157,6 +173,53 @@ static void __init register_i2c_devices(void)
 				ARRAY_SIZE(core_exp_i2c_info));
 }
 #endif
+
+#ifdef CONFIG_LGE_FB_MSM_MDP_LUT_ENABLE
+static int atoi(const char *name)
+{
+	int val = 0;
+
+	for (;; name++) {
+		switch (*name) {
+		case '0' ... '9': val = 10*val + (*name-'0'); break;
+		default: return val;
+		}
+	}
+}
+
+static int __init lcd_k_cal_setup(char *arg)
+{
+	char buf[4]={0,};
+
+#if defined(CONFIG_MACH_MSM8X25_V7)
+
+	memcpy(buf, arg+0, 3); // B
+	g_lge_lcd_k_cal[2] = atoi(buf);
+
+	memcpy(buf, arg+3, 3); // G
+	g_lge_lcd_k_cal[1] = atoi(buf);
+
+	memcpy(buf, arg+6, 3); // G
+	g_lge_lcd_k_cal[0] = atoi(buf);
+#else
+	memcpy(buf, arg+0, 3); // R
+	g_lge_lcd_k_cal[0] = atoi(buf);
+
+	memcpy(buf, arg+3, 3); // G
+	g_lge_lcd_k_cal[1] = atoi(buf);
+
+	memcpy(buf, arg+6, 3); // B
+	g_lge_lcd_k_cal[2] = atoi(buf);
+#endif
+
+	// magic code => "cal"
+	memcpy(g_lge_lcd_k_cal+3, arg+9, 3);
+
+	printk(KERN_INFO " *** lcd_k_cal=%s, r:%d, g:%d, b:%d \n", arg, g_lge_lcd_k_cal[0], g_lge_lcd_k_cal[1], g_lge_lcd_k_cal[2]);
+	return 1;
+}
+__setup("lge.lcd_k_cal=", lcd_k_cal_setup);
+#endif //CONFIG_LGE_FB_MSM_MDP_LUT_ENABLE
 
 static struct msm_gpio qup_i2c_gpios_io[] = {
 	{ GPIO_CFG(60, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_8MA),
@@ -187,6 +250,7 @@ static void gsbi_qup_i2c_gpio_config(int adap_id, int config_type)
 	if (adap_id < 0 || adap_id > 1)
 		return;
 
+	/* Each adapter gets 2 lines from the table */
 	if (config_type)
 		rc = msm_gpios_request_enable(&qup_i2c_gpios_hw[adap_id*2], 2);
 	else
@@ -196,7 +260,13 @@ static void gsbi_qup_i2c_gpio_config(int adap_id, int config_type)
 }
 
 static struct msm_i2c_platform_data msm_gsbi0_qup_i2c_pdata = {
+
+#ifdef CONFIG_MACH_LGE
 	.clk_freq		= 400000,
+#else
+	.clk_freq		= 100000,
+#endif
+
 	.msm_i2c_config_gpio	= gsbi_qup_i2c_gpio_config,
 };
 
@@ -206,28 +276,21 @@ static struct msm_i2c_platform_data msm_gsbi1_qup_i2c_pdata = {
 };
 
 #ifdef CONFIG_ARCH_MSM7X27A
-#define MSM_RESERVE_MDP_SIZE		0x4600000
-#define MSM7x25A_MSM_RESERVE_MDP_SIZE	0x1500000
+#define MSM_RESERVE_MDP_SIZE		0x2800000
+#define MSM7x25A_MSM_RESERVE_MDP_SIZE   0x1500000
 #define MSM_RESERVE_ADSP_SIZE		0x1E00000
 #define MSM7x25A_MSM_RESERVE_ADSP_SIZE	0xB91000
 #define CAMERA_ZSL_SIZE			(SZ_1M * 60)
 #endif
 
 #ifdef CONFIG_ION_MSM
-#define MSM_ION_HEAP_NUM	5
+#define MSM_ION_HEAP_NUM        4
 static struct platform_device ion_dev;
 static int msm_ion_camera_size;
 static int msm_ion_audio_size;
 static int msm_ion_sf_size;
-static int msm_ion_camera_size_carving;
 #endif
 
-#define CAMERA_HEAP_BASE	0x0
-#ifdef CONFIG_CMA
-#define CAMERA_HEAP_TYPE	ION_HEAP_TYPE_DMA
-#else
-#define CAMERA_HEAP_TYPE	ION_HEAP_TYPE_CARVEOUT
-#endif
 
 static struct resource smc91x_resources[] = {
 	[0] = {
@@ -253,6 +316,28 @@ static struct platform_device smc91x_device = {
 static struct msm_serial_hs_platform_data msm_uart_dm1_pdata = {
 	.inject_rx_on_wakeup	= 1,
 	.rx_to_inject		= 0xFD,
+};
+#endif
+
+#ifdef CONFIG_LGE_DIAGTEST
+static struct diagcmd_platform_data lg_fw_diagcmd_pdata = {
+	.name = "lg_fw_diagcmd",
+};
+
+static struct platform_device lg_fw_diagcmd_device = {
+	.name = "lg_fw_diagcmd",
+	.id = -1,
+	.dev = {
+		.platform_data = &lg_fw_diagcmd_pdata
+	},
+};
+
+static struct platform_device lg_diag_cmd_device = {
+	.name = "lg_diag_cmd",
+	.id = -1,
+	.dev = {
+		.platform_data = 0, //&lg_diag_cmd_pdata
+	},
 };
 #endif
 
@@ -324,7 +409,7 @@ struct msm_pm_platform_data msm8625_pm_data[MSM_PM_SLEEP_MODE_NR * 2] = {
 					.idle_enabled = 0,
 					.suspend_enabled = 0,
 					.latency = 500,
-					.residency = 500,
+					.residency = 6000,
 	},
 
 	[MSM_PM_MODE(0, MSM_PM_SLEEP_MODE_WAIT_FOR_INTERRUPT)] = {
@@ -343,7 +428,7 @@ struct msm_pm_platform_data msm8625_pm_data[MSM_PM_SLEEP_MODE_NR * 2] = {
 					.idle_enabled = 0,
 					.suspend_enabled = 0,
 					.latency = 500,
-					.residency = 500,
+					.residency = 6000,
 	},
 
 	[MSM_PM_MODE(1, MSM_PM_SLEEP_MODE_WAIT_FOR_INTERRUPT)] = {
@@ -380,6 +465,149 @@ static int __init reserve_adsp_size_setup(char *p)
 
 early_param("reserve_adsp_size", reserve_adsp_size_setup);
 
+#if 0 //ew0804.kim multiple
+#define SND(desc, num) { .name = #desc, .id = num }
+static struct snd_endpoint snd_endpoints_list[] = {
+	SND(HANDSET, 0),
+	SND(MONO_HEADSET, 2),
+	SND(HEADSET, 3),
+	SND(SPEAKER, 6),
+	SND(TTY_HEADSET, 8),
+	SND(TTY_VCO, 9),
+	SND(TTY_HCO, 10),
+	SND(BT, 12),
+	SND(IN_S_SADC_OUT_HANDSET, 16),
+	SND(IN_S_SADC_OUT_SPEAKER_PHONE, 25),
+	SND(FM_DIGITAL_STEREO_HEADSET, 26),
+	SND(FM_DIGITAL_SPEAKER_PHONE, 27),
+	SND(FM_DIGITAL_BT_A2DP_HEADSET, 28),
+	SND(STEREO_HEADSET_AND_SPEAKER, 31),
+	SND(CURRENT, 0x7FFFFFFE),
+	SND(FM_ANALOG_STEREO_HEADSET, 35),
+	SND(FM_ANALOG_STEREO_HEADSET_CODEC, 36),
+};
+#undef SND
+
+static struct msm_snd_endpoints msm_device_snd_endpoints = {
+	.endpoints = snd_endpoints_list,
+	.num = sizeof(snd_endpoints_list) / sizeof(struct snd_endpoint)
+};
+
+static struct platform_device msm_device_snd = {
+	.name = "msm_snd",
+	.id = -1,
+	.dev    = {
+		.platform_data = &msm_device_snd_endpoints
+	},
+};
+
+#define DEC0_FORMAT ((1<<MSM_ADSP_CODEC_MP3)| \
+	(1<<MSM_ADSP_CODEC_AAC)|(1<<MSM_ADSP_CODEC_WMA)| \
+	(1<<MSM_ADSP_CODEC_WMAPRO)|(1<<MSM_ADSP_CODEC_AMRWB)| \
+	(1<<MSM_ADSP_CODEC_AMRNB)|(1<<MSM_ADSP_CODEC_WAV)| \
+	(1<<MSM_ADSP_CODEC_ADPCM)|(1<<MSM_ADSP_CODEC_YADPCM)| \
+	(1<<MSM_ADSP_CODEC_EVRC)|(1<<MSM_ADSP_CODEC_QCELP))
+#define DEC1_FORMAT ((1<<MSM_ADSP_CODEC_MP3)| \
+	(1<<MSM_ADSP_CODEC_AAC)|(1<<MSM_ADSP_CODEC_WMA)| \
+	(1<<MSM_ADSP_CODEC_WMAPRO)|(1<<MSM_ADSP_CODEC_AMRWB)| \
+	(1<<MSM_ADSP_CODEC_AMRNB)|(1<<MSM_ADSP_CODEC_WAV)| \
+	(1<<MSM_ADSP_CODEC_ADPCM)|(1<<MSM_ADSP_CODEC_YADPCM)| \
+	(1<<MSM_ADSP_CODEC_EVRC)|(1<<MSM_ADSP_CODEC_QCELP))
+#define DEC2_FORMAT ((1<<MSM_ADSP_CODEC_MP3)| \
+	(1<<MSM_ADSP_CODEC_AAC)|(1<<MSM_ADSP_CODEC_WMA)| \
+	(1<<MSM_ADSP_CODEC_WMAPRO)|(1<<MSM_ADSP_CODEC_AMRWB)| \
+	(1<<MSM_ADSP_CODEC_AMRNB)|(1<<MSM_ADSP_CODEC_WAV)| \
+	(1<<MSM_ADSP_CODEC_ADPCM)|(1<<MSM_ADSP_CODEC_YADPCM)| \
+	(1<<MSM_ADSP_CODEC_EVRC)|(1<<MSM_ADSP_CODEC_QCELP))
+#define DEC3_FORMAT ((1<<MSM_ADSP_CODEC_MP3)| \
+	(1<<MSM_ADSP_CODEC_AAC)|(1<<MSM_ADSP_CODEC_WMA)| \
+	(1<<MSM_ADSP_CODEC_WMAPRO)|(1<<MSM_ADSP_CODEC_AMRWB)| \
+	(1<<MSM_ADSP_CODEC_AMRNB)|(1<<MSM_ADSP_CODEC_WAV)| \
+	(1<<MSM_ADSP_CODEC_ADPCM)|(1<<MSM_ADSP_CODEC_YADPCM)| \
+	(1<<MSM_ADSP_CODEC_EVRC)|(1<<MSM_ADSP_CODEC_QCELP))
+#define DEC4_FORMAT (1<<MSM_ADSP_CODEC_MIDI)
+
+static unsigned int dec_concurrency_table[] = {
+	/* Audio LP */
+	(DEC0_FORMAT|(1<<MSM_ADSP_MODE_TUNNEL)|(1<<MSM_ADSP_OP_DMA)), 0,
+	0, 0, 0,
+
+	/* Concurrency 1 */
+	(DEC0_FORMAT|(1<<MSM_ADSP_MODE_TUNNEL)|(1<<MSM_ADSP_OP_DM)),
+	(DEC1_FORMAT|(1<<MSM_ADSP_MODE_TUNNEL)|(1<<MSM_ADSP_OP_DM)),
+	(DEC2_FORMAT|(1<<MSM_ADSP_MODE_TUNNEL)|(1<<MSM_ADSP_OP_DM)),
+	(DEC3_FORMAT|(1<<MSM_ADSP_MODE_TUNNEL)|(1<<MSM_ADSP_OP_DM)),
+	(DEC4_FORMAT),
+
+	 /* Concurrency 2 */
+	(DEC0_FORMAT|(1<<MSM_ADSP_MODE_TUNNEL)|(1<<MSM_ADSP_OP_DM)),
+	(DEC1_FORMAT|(1<<MSM_ADSP_MODE_TUNNEL)|(1<<MSM_ADSP_OP_DM)),
+	(DEC2_FORMAT|(1<<MSM_ADSP_MODE_TUNNEL)|(1<<MSM_ADSP_OP_DM)),
+	(DEC3_FORMAT|(1<<MSM_ADSP_MODE_TUNNEL)|(1<<MSM_ADSP_OP_DM)),
+	(DEC4_FORMAT),
+
+	/* Concurrency 3 */
+	(DEC0_FORMAT|(1<<MSM_ADSP_MODE_TUNNEL)|(1<<MSM_ADSP_OP_DM)),
+	(DEC1_FORMAT|(1<<MSM_ADSP_MODE_TUNNEL)|(1<<MSM_ADSP_OP_DM)),
+	(DEC2_FORMAT|(1<<MSM_ADSP_MODE_TUNNEL)|(1<<MSM_ADSP_OP_DM)),
+	(DEC3_FORMAT|(1<<MSM_ADSP_MODE_NONTUNNEL)|(1<<MSM_ADSP_OP_DM)),
+	(DEC4_FORMAT),
+
+	/* Concurrency 4 */
+	(DEC0_FORMAT|(1<<MSM_ADSP_MODE_TUNNEL)|(1<<MSM_ADSP_OP_DM)),
+	(DEC1_FORMAT|(1<<MSM_ADSP_MODE_TUNNEL)|(1<<MSM_ADSP_OP_DM)),
+	(DEC2_FORMAT|(1<<MSM_ADSP_MODE_NONTUNNEL)|(1<<MSM_ADSP_OP_DM)),
+	(DEC3_FORMAT|(1<<MSM_ADSP_MODE_NONTUNNEL)|(1<<MSM_ADSP_OP_DM)),
+	(DEC4_FORMAT),
+
+	/* Concurrency 5 */
+	(DEC0_FORMAT|(1<<MSM_ADSP_MODE_TUNNEL)|(1<<MSM_ADSP_OP_DM)),
+	(DEC1_FORMAT|(1<<MSM_ADSP_MODE_NONTUNNEL)|(1<<MSM_ADSP_OP_DM)),
+	(DEC2_FORMAT|(1<<MSM_ADSP_MODE_NONTUNNEL)|(1<<MSM_ADSP_OP_DM)),
+	(DEC3_FORMAT|(1<<MSM_ADSP_MODE_NONTUNNEL)|(1<<MSM_ADSP_OP_DM)),
+	(DEC4_FORMAT),
+
+	/* Concurrency 6 */
+	(DEC0_FORMAT|(1<<MSM_ADSP_MODE_TUNNEL)|
+			(1<<MSM_ADSP_MODE_NONTUNNEL)|(1<<MSM_ADSP_OP_DM)),
+	0, 0, 0, 0,
+
+	/* Concurrency 7 */
+	(DEC0_FORMAT|(1<<MSM_ADSP_MODE_NONTUNNEL)|(1<<MSM_ADSP_OP_DM)),
+	(DEC1_FORMAT|(1<<MSM_ADSP_MODE_NONTUNNEL)|(1<<MSM_ADSP_OP_DM)),
+	(DEC2_FORMAT|(1<<MSM_ADSP_MODE_NONTUNNEL)|(1<<MSM_ADSP_OP_DM)),
+	(DEC3_FORMAT|(1<<MSM_ADSP_MODE_NONTUNNEL)|(1<<MSM_ADSP_OP_DM)),
+	(DEC4_FORMAT),
+};
+
+#define DEC_INFO(name, queueid, decid, nr_codec) { .module_name = name, \
+	.module_queueid = queueid, .module_decid = decid, \
+	.nr_codec_support = nr_codec}
+
+static struct msm_adspdec_info dec_info_list[] = {
+	DEC_INFO("AUDPLAY0TASK", 13, 0, 11), /* AudPlay0BitStreamCtrlQueue */
+	DEC_INFO("AUDPLAY1TASK", 14, 1, 11),  /* AudPlay1BitStreamCtrlQueue */
+	DEC_INFO("AUDPLAY2TASK", 15, 2, 11),  /* AudPlay2BitStreamCtrlQueue */
+	DEC_INFO("AUDPLAY3TASK", 16, 3, 11),  /* AudPlay3BitStreamCtrlQueue */
+	DEC_INFO("AUDPLAY4TASK", 17, 4, 1),  /* AudPlay4BitStreamCtrlQueue */
+};
+
+static struct msm_adspdec_database msm_device_adspdec_database = {
+	.num_dec = ARRAY_SIZE(dec_info_list),
+	.num_concurrency_support = (ARRAY_SIZE(dec_concurrency_table) / \
+					ARRAY_SIZE(dec_info_list)),
+	.dec_concurrency_table = dec_concurrency_table,
+	.dec_info_list = dec_info_list,
+};
+
+static struct platform_device msm_device_adspdec = {
+	.name = "msm_adspdec",
+	.id = -1,
+	.dev    = {
+		.platform_data = &msm_device_adspdec_database
+	},
+};
+#endif
 static u32 msm_calculate_batt_capacity(u32 current_voltage);
 
 static struct msm_psy_batt_pdata msm_psy_batt_data = {
@@ -447,12 +675,38 @@ static struct platform_device smsc911x_device = {
 	},
 };
 
+#ifndef CONFIG_MACH_LGE
+static struct msm_gpio smsc911x_gpios[] = {
+	{ GPIO_CFG(48, 0, GPIO_CFG_INPUT, GPIO_CFG_NO_PULL, GPIO_CFG_6MA),
+							 "smsc911x_irq"  },
+	{ GPIO_CFG(49, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_6MA),
+							 "eth_fifo_sel" },
+};
+#endif
+
 static char *msm_adc_surf_device_names[] = {
 	"XO_ADC",
 };
 
+static struct  msm_adc_channel_names msm_adc_xoadc_channel_names[] = {
+	{"vcoin"},
+	{"vbatt"},
+	{"vchg"},
+	{"ichg"},
+	{"vph_pwr"},
+	{"pcb_rev"},
+	{"chg_current"},
+	{"usb_id"},
+	{"batt_therm"},
+	{"pa_therm"},
+	{"usb_vbus"},
+	{"pmic_therm"},
+	{NULL},{NULL},{NULL},
+	{"vbatt_gsm"},
+};
 static struct msm_adc_platform_data msm_adc_pdata = {
 	.dev_names = msm_adc_surf_device_names,
+        .chan_names = msm_adc_xoadc_channel_names,
 	.num_adc = ARRAY_SIZE(msm_adc_surf_device_names),
 	.target_hw = MSM_8x25,
 };
@@ -465,7 +719,34 @@ static struct platform_device msm_adc_device = {
 	},
 };
 
-#if defined(CONFIG_SERIAL_MSM_HSL_CONSOLE) && defined(CONFIG_MSM_SHARED_GPIO_FOR_UART2DM)
+#ifndef CONFIG_MACH_LGE
+#define ETH_FIFO_SEL_GPIO	49
+static void msm7x27a_cfg_smsc911x(void)
+{
+	int res;
+
+	res = msm_gpios_request_enable(smsc911x_gpios,
+				 ARRAY_SIZE(smsc911x_gpios));
+	if (res) {
+		pr_err("%s: unable to enable gpios for SMSC911x\n", __func__);
+		return;
+	}
+
+	/* ETH_FIFO_SEL */
+	res = gpio_direction_output(ETH_FIFO_SEL_GPIO, 0);
+	if (res) {
+		pr_err("%s: unable to get direction for gpio %d\n", __func__,
+							 ETH_FIFO_SEL_GPIO);
+		msm_gpios_disable_free(smsc911x_gpios,
+						 ARRAY_SIZE(smsc911x_gpios));
+		return;
+	}
+	gpio_set_value(ETH_FIFO_SEL_GPIO, 0);
+}
+#endif
+
+#if defined(CONFIG_SERIAL_MSM_HSL_CONSOLE) \
+		&& defined(CONFIG_MSM_SHARED_GPIO_FOR_UART2DM)
 static struct msm_gpio uart2dm_gpios[] = {
 	{GPIO_CFG(19, 2, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_2MA),
 							"uart2dm_rfr_n" },
@@ -525,16 +806,35 @@ static struct platform_device *common_devices[] __initdata = {
 #ifdef CONFIG_ANDROID_RAM_CONSOLE
 	&ram_console_device,
 #endif
+
+	//&msm_device_nand,
+#if 0 ////ew0804 multiple define audio platform devices
+	&msm_device_adspdec,
+	&msm_device_snd,
+	&msm_device_cad,
+	&msm_device_adspdec,
+	&asoc_msm_pcm,
+	&asoc_msm_dai0,
+	&asoc_msm_dai1,
+#endif
 	&msm_batt_device,
 	&msm_adc_device,
 #ifdef CONFIG_ION_MSM
 	&ion_dev,
 #endif
+
+#ifdef CONFIG_LGE_DIAGTEST
+	&lg_fw_diagcmd_device,	
+	&lg_diag_cmd_device,
+#endif
+
 };
 
 static struct platform_device *msm8625_surf_devices[] __initdata = {
 	&msm8625_device_dmov,
-#ifndef CONFIG_LGE_UART_MODE
+#ifdef CONFIG_LGE_UART_MODE
+	
+#else
 	&msm8625_device_uart1,
 #endif
 	&msm8625_device_uart_dm1,
@@ -564,27 +864,18 @@ early_param("reserve_audio_size", reserve_audio_size_setup);
 static void fix_sizes(void)
 {
 	if (machine_is_msm7625a_surf() || machine_is_msm7625a_ffa()) {
-		reserve_mdp_size = MSM7x25A_MSM_RESERVE_MDP_SIZE;
-		reserve_adsp_size = MSM7x25A_MSM_RESERVE_ADSP_SIZE;
+               reserve_mdp_size = MSM7x25A_MSM_RESERVE_MDP_SIZE;
+               reserve_adsp_size = MSM7x25A_MSM_RESERVE_ADSP_SIZE;	
 	} else {
-		reserve_mdp_size = MSM_RESERVE_MDP_SIZE;
-		reserve_adsp_size = MSM_RESERVE_ADSP_SIZE;
+               reserve_mdp_size = MSM_RESERVE_MDP_SIZE;
+               reserve_adsp_size = MSM_RESERVE_ADSP_SIZE;
 	}
 
-	if (get_ddr_size() > SZ_512M)
-		reserve_adsp_size = CAMERA_ZSL_SIZE;
 #ifdef CONFIG_ION_MSM
-	msm_ion_audio_size = MSM_RESERVE_AUDIO_SIZE;
+	msm_ion_camera_size = reserve_adsp_size;
+	msm_ion_audio_size = (MSM_RESERVE_AUDIO_SIZE +
+					RESERVE_KERNEL_EBI1_SIZE);
 	msm_ion_sf_size = reserve_mdp_size;
-#ifdef CONFIG_CMA
-	if (get_ddr_size() > SZ_256M)
-		reserve_adsp_size = CAMERA_ZSL_SIZE;
-	msm_ion_camera_size = reserve_adsp_size;
-	msm_ion_camera_size_carving = 0;
-#else
-	msm_ion_camera_size = reserve_adsp_size;
-	msm_ion_camera_size_carving = msm_ion_camera_size;
-#endif
 #endif
 }
 
@@ -593,22 +884,6 @@ static void fix_sizes(void)
 static struct ion_co_heap_pdata co_ion_pdata = {
 	.adjacent_mem_id = INVALID_HEAP_ID,
 	.align = PAGE_SIZE,
-};
-
-static struct ion_co_heap_pdata co_mm_ion_pdata = {
-	.adjacent_mem_id = INVALID_HEAP_ID,
-	.align = PAGE_SIZE,
-};
-
-static u64 msm_dmamask = DMA_BIT_MASK(32);
-
-static struct platform_device ion_cma_device = {
-	.name = "ion-cma-device",
-	.id = -1,
-	.dev = {
-		.dma_mask = &msm_dmamask,
-		.coherent_dma_mask = DMA_BIT_MASK(32),
-	}
 };
 #endif
 
@@ -626,13 +901,12 @@ struct ion_platform_heap msm7x27a_heaps[] = {
 		/* ION_ADSP = CAMERA */
 		{
 			.id	= ION_CAMERA_HEAP_ID,
-			.type	= CAMERA_HEAP_TYPE,
+			.type	= ION_HEAP_TYPE_CARVEOUT,
 			.name	= ION_CAMERA_HEAP_NAME,
 			.memory_type = ION_EBI_TYPE,
-			.extra_data = (void *)&co_mm_ion_pdata,
-			.priv	= (void *)&ion_cma_device.dev,
+			.extra_data = (void *)&co_ion_pdata,
 		},
-		/* AUDIO HEAP 1 */
+		/* ION_AUDIO */
 		{
 			.id	= ION_AUDIO_HEAP_ID,
 			.type	= ION_HEAP_TYPE_CARVEOUT,
@@ -647,15 +921,6 @@ struct ion_platform_heap msm7x27a_heaps[] = {
 			.name	= ION_SF_HEAP_NAME,
 			.memory_type = ION_EBI_TYPE,
 			.extra_data = (void *)&co_ion_pdata,
-		},
-		/* AUDIO HEAP 2*/
-		{
-			.id	= ION_AUDIO_HEAP_BL_ID,
-			.type	= ION_HEAP_TYPE_CARVEOUT,
-			.name	= ION_AUDIO_BL_HEAP_NAME,
-			.memory_type = ION_EBI_TYPE,
-			.extra_data = (void *)&co_ion_pdata,
-			.base = BOOTLOADER_BASE_ADDR,
 		},
 #endif
 };
@@ -684,21 +949,21 @@ static struct memtype_reserve msm7x27a_reserve_table[] __initdata = {
 	},
 };
 
+
 static void __init size_ion_devices(void)
 {
 #ifdef CONFIG_MSM_MULTIMEDIA_USE_ION
 	ion_pdata.heaps[1].size = msm_ion_camera_size;
-	ion_pdata.heaps[2].size = RESERVE_KERNEL_EBI1_SIZE;
+	ion_pdata.heaps[2].size = msm_ion_audio_size;
 	ion_pdata.heaps[3].size = msm_ion_sf_size;
-	ion_pdata.heaps[4].size = msm_ion_audio_size;
 #endif
 }
 
 static void __init reserve_ion_memory(void)
 {
 #if defined(CONFIG_ION_MSM) && defined(CONFIG_MSM_MULTIMEDIA_USE_ION)
-	msm7x27a_reserve_table[MEMTYPE_EBI1].size += RESERVE_KERNEL_EBI1_SIZE;
-	msm7x27a_reserve_table[MEMTYPE_EBI1].size += msm_ion_camera_size_carving;
+	msm7x27a_reserve_table[MEMTYPE_EBI1].size += msm_ion_camera_size;
+	msm7x27a_reserve_table[MEMTYPE_EBI1].size += msm_ion_audio_size;
 	msm7x27a_reserve_table[MEMTYPE_EBI1].size += msm_ion_sf_size;
 #endif
 }
@@ -724,16 +989,7 @@ static struct reserve_info msm7x27a_reserve_info __initdata = {
 static void __init msm7x27a_reserve(void)
 {
 	reserve_info = &msm7x27a_reserve_info;
-	memblock_remove(MSM8625_NON_CACHE_MEM, SZ_2K);
-	memblock_remove(BOOTLOADER_BASE_ADDR, msm_ion_audio_size);
 	msm_reserve();
-#ifdef CONFIG_CMA
-	dma_declare_contiguous(
-			&ion_cma_device.dev,
-			msm_ion_camera_size,
-			CAMERA_HEAP_BASE,
-			0x26000000);
-#endif
 }
 
 static void __init msm8625_reserve(void)
@@ -758,8 +1014,8 @@ static void __init msm8625_device_i2c_init(void)
 		&msm_gsbi1_qup_i2c_pdata;
 }
 
-#define MSM_EBI2_PHYS		0xa0d00000
-#define MSM_EBI2_XMEM_CS2_CFG1	0xa0d10030
+#define MSM_EBI2_PHYS			0xa0d00000
+#define MSM_EBI2_XMEM_CS2_CFG1		0xa0d10030
 
 static void __init msm7x27a_init_ebi2(void)
 {
@@ -771,14 +1027,15 @@ static void __init msm7x27a_init_ebi2(void)
 		return;
 
 	ebi2_cfg = readl(ebi2_cfg_ptr);
-
+/* LGE_CHANGE 2012-03-29, woonrae.cho@lge.com, board feature change */
 	if (machine_is_msm7x27a_rumi3() || machine_is_msm7x27a_surf() ||
 		machine_is_msm7625a_surf() || machine_is_msm8625_surf() ||machine_is_msm8x25_v7() )
-		ebi2_cfg |= (1 << 4);
+		ebi2_cfg |= (1 << 4); /* CS2 */
 
 	writel(ebi2_cfg, ebi2_cfg_ptr);
 	iounmap(ebi2_cfg_ptr);
 
+	/* Enable A/D MUX[bit 31] from EBI2_XMEM_CS2_CFG1 */
 	ebi2_cfg_ptr = ioremap_nocache(MSM_EBI2_XMEM_CS2_CFG1,
 							 sizeof(uint32_t));
 	if (!ebi2_cfg_ptr)
@@ -791,6 +1048,7 @@ static void __init msm7x27a_init_ebi2(void)
 	writel(ebi2_cfg, ebi2_cfg_ptr);
 	iounmap(ebi2_cfg_ptr);
 }
+
 
 
 static void msm_adsp_add_pdev(void)
@@ -909,8 +1167,8 @@ static void __init msm7x2x_init(void)
 {
 	msm7x2x_misc_init();
 
+	/* Initialize regulators first so that other devices can use them */
 	msm7x27a_init_regulators();
-
 	msm_adsp_add_pdev();
 	if (cpu_is_msm8625())
 		msm8625_device_i2c_init();
@@ -919,46 +1177,63 @@ static void __init msm7x2x_init(void)
 	msm7x27a_init_ebi2();
 	msm7x27a_uartdm_config();
 
+/* LGE_CHANGE_S : 2012-09-14 sungmin.cho@lge.com camera bring up */
+#ifndef CONFIG_MACH_LGE
+	msm7x27a_cfg_smsc911x();
+#endif
+/* LGE_CHANGE_E : 2012-09-14 sungmin.cho@lge.com camera bring up */
+
 	msm7x27a_add_footswitch_devices();
 	msm7x27a_add_platform_devices();
+	/* Ensure ar6000pm device is registered before MMC/SDC */
 	msm7x27a_init_ar6000pm();
-
 	msm7627a_init_mmc();
-
 	msm_fb_add_devices();
+// LGE_CHANGE_S, add usb devices
 	lge_add_usb_devices();
-
+// LGE_CHANGE_E, add usb devices
 	msm7x27a_pm_init();
 	register_i2c_devices();
 #if defined(CONFIG_BT) && defined(CONFIG_MARIMBA_CORE)
 	msm7627a_bt_power_init();
 #endif
-#ifdef CONFIG_MSM7X27A_AUDIO
+#if CONFIG_MSM7X27A_AUDIO //ew0804.kim
 	lge_add_sound_devices();
 #endif
 	msm7627a_camera_init();
 	msm7627a_add_io_devices();
+	/*7x25a kgsl initializations*/
 	msm7x25a_kgsl_3d0_init();
+	/*8x25 kgsl initializations*/
 	msm8x25_kgsl_3d0_init();
 	lge_add_gpio_i2c_devices();
+/* 2012-10-25 dajin.kim@lge.com Boot Mode Check [START] */
 #ifdef CONFIG_LGE_POWER_ON_STATUS_PATCH
 	lge_board_pwr_on_status();
 #endif
 #ifdef CONFIG_LGE_BOOT_MODE
 	lge_add_boot_mode_devices();
 #endif
-#if defined(CONFIG_ANDROID_RAM_CONSOLE) && defined(CONFIG_LGE_HANDLE_PANIC)
+/* 2012-10-25 dajin.kim@lge.com Boot Mode Check [END] */
+        /*LGE_CHANGE_S : seven.kim@lge.com demigot crash handler */
+	#if defined(CONFIG_ANDROID_RAM_CONSOLE) && defined(CONFIG_LGE_HANDLE_PANIC)
 	lge_add_panic_handler_devices();
-#endif
+   #endif /*CONFIG_ANDROID_RAM_CONSOLE && CONFIG_LGE_HANDLE_PANIC*/
+   /*LGE_CHANGE_E : seven.kim@lge.com demigot crash handler */
+// LGE_CHANGE_S, narasimha.chikka@lge.com,Add pm device	
 	lge_add_pm_devices();
+// LGE_CHANGE_E, narasimha.chikka@lge.com,Add pm device
 }
 
 static void __init msm7x2x_init_early(void)
 {
 	msm_msm7627a_allocate_memory_regions();
+/*LGE_CHANGE_S[satya.kamasali@lge.com]20121017:
+*This is called to initiailize peristent ram */
 #ifdef CONFIG_ANDROID_RAM_CONSOLE
 	persistent_ram_early_init(&ram_console_ram);
 #endif
+/*LGE_CHANGE_E[satya.kamasali@lge.com]20121017*/
 }
 
 #ifdef CONFIG_LGE_UART_MODE

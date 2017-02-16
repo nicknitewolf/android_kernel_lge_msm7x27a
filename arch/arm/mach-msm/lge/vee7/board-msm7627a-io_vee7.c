@@ -1578,7 +1578,7 @@ void __init msm7627a_add_io_devices(void)
 	gpio_tlmm_config(GPIO_CFG(TS_TOUCH_ID, 0, GPIO_CFG_INPUT, GPIO_CFG_NO_PULL, GPIO_CFG_2MA), GPIO_CFG_ENABLE);
 	touch_id = gpio_get_value(TS_TOUCH_ID);
 
-	printk("Touch panel maker is %d \n",touch_id);
+	printk("Touch panel maker is %d \n",touch_id);	
 #endif
 
 platform_add_devices(
