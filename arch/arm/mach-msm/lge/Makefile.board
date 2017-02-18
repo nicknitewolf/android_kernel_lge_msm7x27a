@@ -3,7 +3,9 @@
 #
 
 # LGE Common Model
+ifndef CONFIG_MACH_MSM8X25_V7
 obj-$(CONFIG_MACH_LGE) += common/
+endif
 
 # LGE M4 Model 
 obj-$(CONFIG_MACH_MSM7X25A_M4) += m4/
